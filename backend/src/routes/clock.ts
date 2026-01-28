@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { authMiddleware, ambassadorOnly } from '../auth/middleware';
-import { processScan } from '../services/clock';
+import { processScan, processManualClock } from '../services/clock';
 
 const router = Router();
 router.use(authMiddleware, ambassadorOnly);
@@ -26,6 +26,18 @@ router.post('/scan', (req: Request, res: Response) => {
     deviceHash: parsed.data.device_hash,
   });
 
+  if (!result.success) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+// Manual clock in/out (no QR needed)
+router.post('/manual', (req: Request, res: Response) => {
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || null;
+  const officeId = req.body.office_id || 'APU_MAIN_OFFICE';
+
+  const result = processManualClock(req.user!.userId, officeId, ip || undefined);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }

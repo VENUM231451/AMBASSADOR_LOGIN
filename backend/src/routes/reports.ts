@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, adminOnly } from '../auth/middleware';
-import { getTimesheetData, generateTimesheetExcel } from '../services/reports';
+import { getTimesheetData, generateTimesheetExcel, generateAmbassadorExcel } from '../services/reports';
 import { getDb } from '../db/schema';
 
 const router = Router();
@@ -39,6 +39,19 @@ router.get('/reports/timesheets.xlsx', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename=Timesheets-${month}.xlsx`);
   res.send(buffer);
+});
+
+// Individual ambassador Excel
+router.get('/reports/ambassador/:id/timesheet.xlsx', async (req: Request, res: Response) => {
+  const month = req.query.month as string;
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'Provide month as YYYY-MM' });
+
+  const result = await generateAmbassadorExcel(req.params.id, month);
+  if (!result) return res.status(404).json({ error: 'Ambassador not found' });
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename=${result.name.replace(/\s+/g, '_')}-${month}.xlsx`);
+  res.send(result.buffer);
 });
 
 export default router;
