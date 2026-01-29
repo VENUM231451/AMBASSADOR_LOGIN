@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiJson } from '@/lib/api';
 import { formatTime, formatDuration, currentMonth } from '@/lib/utils';
@@ -11,9 +11,34 @@ import { StatCard } from '@/components/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageTransition, FadeIn } from '@/components/motion';
 import { useToast } from '@/components/toast-provider';
-import { ScanLine, Clock, CalendarDays, CheckCircle2, Circle, Loader2 } from 'lucide-react';
+import { ScanLine, Clock, CalendarDays, CheckCircle2, Circle, Loader2, Timer } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+
+function ElapsedTimer({ clockInAt }: { clockInAt: string }) {
+  const [elapsed, setElapsed] = useState('');
+
+  useEffect(() => {
+    function update() {
+      const diff = Date.now() - new Date(clockInAt).getTime();
+      if (diff < 0) { setElapsed('0h 0m 0s'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setElapsed(`${h}h ${m}m ${s}s`);
+    }
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [clockInAt]);
+
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <Timer className="h-4 w-4 text-emerald-600 animate-pulse" />
+      <span className="text-lg font-bold text-emerald-700 tabular-nums">{elapsed}</span>
+    </div>
+  );
+}
 
 export default function AmbassadorHome() {
   const [me, setMe] = useState<any>(null);
@@ -25,23 +50,33 @@ export default function AmbassadorHome() {
   const router = useRouter();
   const { toast } = useToast();
 
-  async function loadMe() {
+  const loadMe = useCallback(async () => {
     try {
       const data = await apiJson('/me');
       setMe(data);
-    } catch {} finally { setLoading(false); }
-  }
+    } catch (e: any) {
+      console.error('loadMe error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  async function loadMonth() {
+  const loadMonth = useCallback(async () => {
     try {
       const data = await apiJson(`/me/sessions?month=${currentMonth()}`);
       setMonthData(data);
-    } catch {}
-  }
+    } catch (e: any) {
+      console.error('loadMonth error:', e);
+    }
+  }, []);
 
-  useEffect(() => { loadMe(); loadMonth(); }, []);
+  useEffect(() => {
+    loadMe();
+    loadMonth();
+  }, [loadMe, loadMonth]);
 
   async function handleManualClock() {
+    if (clocking) return;
     setClocking(true);
     setResult(null);
     try {
@@ -50,15 +85,19 @@ export default function AmbassadorHome() {
         body: JSON.stringify({ office_id: 'APU_MAIN_OFFICE' }),
       });
       setResult(data);
-      toast('success', data.action === 'IN' ? 'Clocked in successfully' : 'Clocked out successfully');
+      toast('success', data.action === 'IN' ? 'Clocked in successfully!' : 'Clocked out successfully!');
+      // Refresh state
       await loadMe();
       await loadMonth();
     } catch (e: any) {
-      toast('error', e.message);
+      console.error('Manual clock error:', e);
+      toast('error', e.message || 'Failed to clock in/out. Please try again.');
     } finally {
       setClocking(false);
     }
   }
+
+  const isClockedIn = !!me?.open_session;
 
   if (loading) {
     return (
@@ -77,30 +116,36 @@ export default function AmbassadorHome() {
     <PageTransition>
       <div className="space-y-6">
         {/* Status banner */}
-        <Card className={me?.open_session ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200'}>
-          <CardContent className="py-4 flex items-center gap-4">
-            <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${
-              me?.open_session ? 'bg-emerald-100' : 'bg-slate-100'
-            }`}>
-              {me?.open_session
-                ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                : <Circle className="h-5 w-5 text-slate-400" />
-              }
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm">
-                {me?.open_session ? 'Clocked In' : 'Not Clocked In'}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {me?.open_session
-                  ? `Since ${formatTime(me.open_session.clock_in_at)}`
-                  : 'Tap below to start your shift'
+        <Card className={isClockedIn ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200'}>
+          <CardContent className="py-4">
+            <div className="flex items-center gap-4">
+              <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${
+                isClockedIn ? 'bg-emerald-100' : 'bg-slate-100'
+              }`}>
+                {isClockedIn
+                  ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  : <Circle className="h-5 w-5 text-slate-400" />
                 }
-              </p>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm">
+                  {isClockedIn ? 'Clocked In' : 'Not Clocked In'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {isClockedIn
+                    ? `Since ${formatTime(me.open_session.clock_in_at)}`
+                    : 'Tap below to start your shift'
+                  }
+                </p>
+                {/* Live elapsed timer */}
+                {isClockedIn && me.open_session.clock_in_at && (
+                  <ElapsedTimer clockInAt={me.open_session.clock_in_at} />
+                )}
+              </div>
+              <Badge variant={isClockedIn ? 'success' : 'secondary'}>
+                {isClockedIn ? 'Active' : 'Idle'}
+              </Badge>
             </div>
-            <Badge variant={me?.open_session ? 'success' : 'secondary'}>
-              {me?.open_session ? 'Active' : 'Idle'}
-            </Badge>
           </CardContent>
         </Card>
 
@@ -108,12 +153,17 @@ export default function AmbassadorHome() {
         <FadeIn delay={0.05}>
           <Card>
             <CardContent className="py-8 text-center">
-              <h2 className="text-lg font-semibold mb-2">Clock {me?.open_session ? 'Out' : 'In'}</h2>
+              <h2 className="text-lg font-semibold mb-2">Clock {isClockedIn ? 'Out' : 'In'}</h2>
               <p className="text-sm text-muted-foreground mb-6">Tap the button or scan the office QR code</p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                <Button size="xl" onClick={handleManualClock} disabled={clocking}>
+                <Button
+                  size="xl"
+                  onClick={handleManualClock}
+                  disabled={clocking}
+                  className={isClockedIn ? 'bg-red-600 hover:bg-red-700' : ''}
+                >
                   {clocking ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Clock className="h-5 w-5 mr-2" />}
-                  {clocking ? 'Processing...' : me?.open_session ? 'Clock Out' : 'Clock In'}
+                  {clocking ? 'Processing...' : isClockedIn ? 'Clock Out' : 'Clock In'}
                 </Button>
                 <Button variant="outline" size="lg" onClick={() => router.push('/ambassador/scan')}>
                   <ScanLine className="h-4 w-4 mr-2" />
@@ -124,7 +174,7 @@ export default function AmbassadorHome() {
           </Card>
         </FadeIn>
 
-        {/* Result sheet */}
+        {/* Result feedback */}
         <AnimatePresence>
           {result && (
             <FadeIn>
@@ -149,12 +199,12 @@ export default function AmbassadorHome() {
           <div className="grid grid-cols-2 gap-4">
             <StatCard
               label="Hours this month"
-              value={monthData?.total_hours?.toFixed(1) || '0'}
+              value={monthData ? (monthData.total_hours?.toFixed(1) ?? '0') : '—'}
               icon={Clock}
             />
             <StatCard
               label="Shifts this month"
-              value={monthData?.sessions?.length || 0}
+              value={monthData ? (monthData.sessions?.length ?? 0) : '—'}
               icon={CalendarDays}
             />
           </div>
